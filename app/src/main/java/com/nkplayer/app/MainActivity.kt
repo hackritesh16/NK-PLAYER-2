@@ -30,6 +30,8 @@ import kotlinx.coroutines.delay
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.ui.PlayerView
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -113,15 +115,23 @@ private fun NKPlayerApp() {
             Box(modifier = Modifier.fillMaxSize()) {
                 AmbientBackdrop()
                 if (currentMedia != null) {
-                    AudioNowPlayingScreen(
-                        media = currentMedia!!,
-                        isPlaying = isPlaying,
-                        positionMs = positionMs,
-                        durationMs = durationMs,
-                        onBack = { exoPlayer.pause(); currentMedia = null },
-                        onToggle = { if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play() },
-                        onSeek = { exoPlayer.seekTo(it) }
-                    )
+                    if (currentMedia!!.isVideo) {
+                        VideoNowPlayingScreen(
+                            player = exoPlayer,
+                            media = currentMedia!!,
+                            onBack = { exoPlayer.pause(); currentMedia = null }
+                        )
+                    } else {
+                        AudioNowPlayingScreen(
+                            media = currentMedia!!,
+                            isPlaying = isPlaying,
+                            positionMs = positionMs,
+                            durationMs = durationMs,
+                            onBack = { exoPlayer.pause(); currentMedia = null },
+                            onToggle = { if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play() },
+                            onSeek = { exoPlayer.seekTo(it) }
+                        )
+                    }
                 } else {
                     Column(
                         modifier = Modifier.fillMaxSize().statusBarsPadding()
@@ -137,7 +147,8 @@ private fun NKPlayerApp() {
                                 )
                                 PlayerTab.VIDEO -> VideoLibraryScreen(
                                     items = videoItems, hasAccess = videoAllowed,
-                                    onRequestAccess = ::requestMediaAccess
+                                    onRequestAccess = ::requestMediaAccess,
+                                    onPlay = { currentMedia = it }
                                 )
                                 PlayerTab.LIBRARY -> LibraryPlaceholder("Your Library", "Favorites, playlists and listening history will live here.", Icons.Rounded.LibraryMusic)
                             }
@@ -504,7 +515,8 @@ private fun AudioLibraryScreen(
 private fun VideoLibraryScreen(
     items: List<DeviceMedia>,
     hasAccess: Boolean,
-    onRequestAccess: () -> Unit
+    onRequestAccess: () -> Unit,
+    onPlay: (DeviceMedia) -> Unit
 ) {
     var query by remember { mutableStateOf("") }
     val visible = remember(items, query) {
@@ -539,7 +551,7 @@ private fun VideoLibraryScreen(
                 body = "Supported local video files will appear here after a device scan."
             )
             else -> visible.forEach { item ->
-                MediaRow(item.title, "Local video", item.durationMs, Icons.Rounded.PlayCircleOutline)
+                MediaRow(item.title, "Local video", item.durationMs, Icons.Rounded.PlayCircleOutline, onClick = { onPlay(item) })
                 Spacer(Modifier.height(8.dp))
             }
         }
@@ -595,6 +607,48 @@ private fun formatDuration(durationMs: Long): String {
     return "%d:%02d".format(minutes, seconds)
 }
 
+
+@Composable
+private fun VideoNowPlayingScreen(
+    player: ExoPlayer,
+    media: DeviceMedia,
+    onBack: () -> Unit
+) {
+    var showInfo by remember(media.id) { mutableStateOf(true) }
+    Box(
+        modifier = Modifier.fillMaxSize().background(Color.Black)
+    ) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { context ->
+                PlayerView(context).apply {
+                    this.player = player
+                    useController = true
+                    controllerAutoShow = true
+                    setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
+                    resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                }
+            },
+            update = { it.player = player },
+            onRelease = { it.player = null }
+        )
+        if (showInfo) {
+            Row(
+                modifier = Modifier.align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                GlassIconButton(Icons.Rounded.ArrowBack, "Back to videos", onBack)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(media.title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    Text("NK PLAYER · VIDEO", color = Color.White.copy(alpha = 0.65f), fontSize = 9.sp, letterSpacing = 1.4.sp)
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun AudioNowPlayingScreen(
