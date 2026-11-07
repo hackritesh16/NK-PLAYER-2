@@ -25,7 +25,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Slider
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
+import android.content.ComponentName
 import kotlinx.coroutines.delay
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -63,11 +65,16 @@ private enum class PlayerTab { HOME, AUDIO, VIDEO, LIBRARY }
 @Composable
 private fun NKPlayerApp() {
     val context = LocalContext.current
-    val exoPlayer = remember {
-        ExoPlayer.Builder(context).build()
+    var exoPlayer by remember { mutableStateOf<Player?>(null) }
+    val controllerFuture = remember {
+        MediaController.Builder(context, SessionToken(context, ComponentName(context, PlaybackService::class.java))).buildAsync()
     }
-    DisposableEffect(exoPlayer) {
-        onDispose { exoPlayer.release() }
+    DisposableEffect(controllerFuture) {
+        controllerFuture.addListener(
+            { exoPlayer = runCatching { controllerFuture.get() }.getOrNull() },
+            ContextCompat.getMainExecutor(context)
+        )
+        onDispose { MediaController.releaseFuture(controllerFuture) }
     }
     var currentMedia by remember { mutableStateOf<DeviceMedia?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
@@ -95,17 +102,17 @@ private fun NKPlayerApp() {
 
     LaunchedEffect(currentMedia?.uri) {
         val media = currentMedia ?: return@LaunchedEffect
-        exoPlayer.setMediaItem(MediaItem.fromUri(media.uri))
-        exoPlayer.prepare()
-        exoPlayer.playWhenReady = true
+        exoPlayer?.setMediaItem(MediaItem.fromUri(media.uri))
+        exoPlayer?.prepare()
+        exoPlayer?.playWhenReady = true
         isPlaying = true
     }
 
     LaunchedEffect(exoPlayer) {
         while (true) {
-            positionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
-            durationMs = exoPlayer.duration.takeIf { it > 0L } ?: 0L
-            isPlaying = exoPlayer.isPlaying
+            positionMs = exoPlayer?.currentPosition?.coerceAtLeast(0L) ?: 0L
+            durationMs = exoPlayer?.duration?.takeIf { it > 0L } ?: 0L
+            isPlaying = exoPlayer?.isPlaying == true
             delay(350)
         }
     }
@@ -115,21 +122,21 @@ private fun NKPlayerApp() {
             Box(modifier = Modifier.fillMaxSize()) {
                 AmbientBackdrop()
                 if (currentMedia != null) {
-                    if (currentMedia!!.isVideo) {
+                    if (currentMedia!!.isVideo && exoPlayer != null) {
                         VideoNowPlayingScreen(
-                            player = exoPlayer,
+                            player = exoPlayer!!,
                             media = currentMedia!!,
-                            onBack = { exoPlayer.pause(); currentMedia = null }
+                            onBack = { exoPlayer?.pause(); currentMedia = null }
                         )
-                    } else {
+                    } else if (exoPlayer != null) {
                         AudioNowPlayingScreen(
                             media = currentMedia!!,
                             isPlaying = isPlaying,
                             positionMs = positionMs,
                             durationMs = durationMs,
-                            onBack = { exoPlayer.pause(); currentMedia = null },
-                            onToggle = { if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play() },
-                            onSeek = { exoPlayer.seekTo(it) }
+                            onBack = { exoPlayer?.pause(); currentMedia = null },
+                            onToggle = { if (exoPlayer?.isPlaying == true) exoPlayer?.pause() else exoPlayer?.play() },
+                            onSeek = { exoPlayer?.seekTo(it) }
                         )
                     }
                 } else {
