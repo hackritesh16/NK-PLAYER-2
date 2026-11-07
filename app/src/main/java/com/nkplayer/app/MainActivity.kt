@@ -1,6 +1,12 @@
 package com.nkplayer.app
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -18,6 +24,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,7 +55,28 @@ private enum class PlayerTab { HOME, AUDIO, VIDEO, LIBRARY }
 
 @Composable
 private fun NKPlayerApp() {
+    val context = LocalContext.current
+    var accessRefresh by remember { mutableIntStateOf(0) }
+    val audioAllowed = remember(accessRefresh) { hasAudioPermission(context) }
+    val videoAllowed = remember(accessRefresh) { hasVideoPermission(context) }
+    var audioItems by remember { mutableStateOf<List<DeviceMedia>>(emptyList()) }
+    var videoItems by remember { mutableStateOf<List<DeviceMedia>>(emptyList()) }
     var selectedTab by remember { mutableStateOf(PlayerTab.HOME) }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { accessRefresh++ }
+
+    fun requestMediaAccess() {
+        val permissions = mediaPermissionsToRequest()
+        permissionLauncher.launch(permissions)
+    }
+
+    LaunchedEffect(audioAllowed, videoAllowed) {
+        if (audioAllowed) audioItems = MediaStoreRepository.loadAudio(context)
+        if (videoAllowed) videoItems = MediaStoreRepository.loadVideos(context)
+    }
+
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize(), color = Background) {
             Box(modifier = Modifier.fillMaxSize()) {
@@ -62,8 +90,16 @@ private fun NKPlayerApp() {
                     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                         when (selectedTab) {
                             PlayerTab.HOME -> HomeScreen(onTabSelected = { selectedTab = it })
-                            PlayerTab.AUDIO -> AudioLibraryScreen()
-                            PlayerTab.VIDEO -> VideoLibraryScreen()
+                            PlayerTab.AUDIO -> AudioLibraryScreen(
+                                items = audioItems,
+                                hasAccess = audioAllowed,
+                                onRequestAccess = ::requestMediaAccess
+                            )
+                            PlayerTab.VIDEO -> VideoLibraryScreen(
+                                items = videoItems,
+                                hasAccess = videoAllowed,
+                                onRequestAccess = ::requestMediaAccess
+                            )
                             PlayerTab.LIBRARY -> LibraryPlaceholder("Your Library", "Favorites, playlists and listening history will live here.", Icons.Rounded.LibraryMusic)
                         }
                     }
@@ -72,6 +108,35 @@ private fun NKPlayerApp() {
             }
         }
     }
+}
+
+private fun mediaPermissionsToRequest(): Array<String> = when {
+    Build.VERSION.SDK_INT >= 34 -> arrayOf(
+        Manifest.permission.READ_MEDIA_AUDIO,
+        Manifest.permission.READ_MEDIA_VIDEO,
+        Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+    )
+    Build.VERSION.SDK_INT >= 33 -> arrayOf(
+        Manifest.permission.READ_MEDIA_AUDIO,
+        Manifest.permission.READ_MEDIA_VIDEO
+    )
+    else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+}
+
+private fun hasAudioPermission(context: android.content.Context): Boolean {
+    val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO
+        else Manifest.permission.READ_EXTERNAL_STORAGE
+    return ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+}
+
+private fun hasVideoPermission(context: android.content.Context): Boolean {
+    if (Build.VERSION.SDK_INT >= 34) {
+        return ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED
+    }
+    val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_VIDEO
+        else Manifest.permission.READ_EXTERNAL_STORAGE
+    return ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 }
 
 @Composable
@@ -321,10 +386,27 @@ private fun NavItem(label: String, icon: ImageVector, active: Boolean, onClick: 
 
 
 @Composable
-private fun AudioLibraryScreen() {
+private fun AudioLibraryScreen(
+    items: List<DeviceMedia>,
+    hasAccess: Boolean,
+    onRequestAccess: () -> Unit
+) {
     var selected by remember { mutableStateOf("Songs") }
     var query by remember { mutableStateOf("") }
-    var sort by remember { mutableStateOf("Recently added") }
+    var sort by remember { mutableStateOf("Name") }
+    val visible = remember(items, query, selected, sort) {
+        val searched = items.filter {
+            it.title.contains(query, true) || it.artist.contains(query, true) || it.album.contains(query, true)
+        }
+        when (selected) {
+            "Albums" -> searched.distinctBy { it.album }
+            "Artists" -> searched.distinctBy { it.artist }
+            else -> searched
+        }.let { list ->
+            if (sort == "Name") list.sortedBy { if (selected == "Artists") it.artist else if (selected == "Albums") it.album else it.title }
+            else list.sortedByDescending { it.durationMs }
+        }
+    }
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
             .padding(top = 22.dp, bottom = 18.dp)
@@ -334,43 +416,59 @@ private fun AudioLibraryScreen() {
                 Text("AUDIO COLLECTION", color = Accent, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                 Spacer(Modifier.height(7.dp))
                 Text("Your music.", color = TextPrimary, fontSize = 29.sp, fontWeight = FontWeight.Bold)
-                Text("All your sounds, in one place.", color = TextMuted, fontSize = 12.sp)
+                Text(if (hasAccess) "${items.size} tracks on this device" else "Scan your device music", color = TextMuted, fontSize = 12.sp)
             }
-            GlassIconButton(Icons.Rounded.MoreVert, "More options") { sort = if (sort == "Recently added") "Name" else "Recently added" }
+            GlassIconButton(Icons.Rounded.Sort, "Change sort") { sort = if (sort == "Name") "Duration" else "Name" }
         }
         Spacer(Modifier.height(22.dp))
         SearchSurface(hint = "Search songs, artists, albums", value = query, onValueChange = { query = it })
         Spacer(Modifier.height(18.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("Songs", "Albums", "Artists", "Folders").forEach { item ->
+            listOf("Songs", "Albums", "Artists").forEach { item ->
                 FilterPill(item, selected == item) { selected = item }
             }
         }
         Spacer(Modifier.height(18.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(selected, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            Text(sort, color = TextMuted, fontSize = 10.sp)
-            Spacer(Modifier.width(5.dp))
-            Icon(Icons.Rounded.SwapVert, null, tint = Accent, modifier = Modifier.size(16.dp))
+            Text("${visible.size} items · $sort", color = TextMuted, fontSize = 10.sp)
         }
         Spacer(Modifier.height(13.dp))
-        EmptyLibraryCard(
-            icon = when (selected) {
-                "Albums" -> Icons.Rounded.Album
-                "Artists" -> Icons.Rounded.Person
-                "Folders" -> Icons.Rounded.FolderOpen
-                else -> Icons.Rounded.MusicNote
-            },
-            title = if (query.isBlank()) "Your $selected will show up here" else "No matching $selected",
-            body = "The audio library screen is ready. Device media scanning and real song data are the next implementation step."
-        )
+        when {
+            !hasAccess -> PermissionCard("Allow audio access", "NK PLAYER needs audio permission to list music stored on your device.", onRequestAccess)
+            visible.isEmpty() -> EmptyLibraryCard(
+                icon = Icons.Rounded.MusicNote,
+                title = if (query.isBlank()) "No audio found" else "No matching tracks",
+                body = "Try another search, or add supported audio files to your device."
+            )
+            else -> visible.forEach { item ->
+                val title = when (selected) {
+                    "Albums" -> item.album
+                    "Artists" -> item.artist
+                    else -> item.title
+                }
+                val subtitle = when (selected) {
+                    "Albums" -> item.artist
+                    "Artists" -> "${items.count { it.artist == item.artist }} tracks"
+                    else -> item.artist
+                }
+                MediaRow(title.ifBlank { "Unknown" }, subtitle, item.durationMs, Icons.Rounded.MusicNote)
+                Spacer(Modifier.height(8.dp))
+            }
+        }
     }
 }
 
 @Composable
-private fun VideoLibraryScreen() {
-    var selected by remember { mutableStateOf("All videos") }
+private fun VideoLibraryScreen(
+    items: List<DeviceMedia>,
+    hasAccess: Boolean,
+    onRequestAccess: () -> Unit
+) {
     var query by remember { mutableStateOf("") }
+    val visible = remember(items, query) {
+        items.filter { it.title.contains(query, true) }.sortedBy { it.title.lowercase() }
+    }
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
             .padding(top = 22.dp, bottom = 18.dp)
@@ -380,32 +478,79 @@ private fun VideoLibraryScreen() {
                 Text("VIDEO COLLECTION", color = Accent, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                 Spacer(Modifier.height(7.dp))
                 Text("Your videos.", color = TextPrimary, fontSize = 29.sp, fontWeight = FontWeight.Bold)
-                Text("Your local cinema.", color = TextMuted, fontSize = 12.sp)
+                Text(if (hasAccess) "${items.size} videos on this device" else "Scan your device videos", color = TextMuted, fontSize = 12.sp)
             }
-            GlassIconButton(Icons.Rounded.GridView, "View layout") { }
+            GlassIconButton(Icons.Rounded.Movie, "Video library") { }
         }
         Spacer(Modifier.height(22.dp))
-        SearchSurface(hint = "Search videos and folders", value = query, onValueChange = { query = it })
-        Spacer(Modifier.height(18.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("All videos", "Folders", "Recently played").forEach { item ->
-                FilterPill(item, selected == item) { selected = item }
-            }
-        }
+        SearchSurface(hint = "Search videos", value = query, onValueChange = { query = it })
         Spacer(Modifier.height(20.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(selected, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            Text("Newest first", color = TextMuted, fontSize = 10.sp)
-            Spacer(Modifier.width(5.dp))
-            Icon(Icons.Rounded.SwapVert, null, tint = Accent, modifier = Modifier.size(16.dp))
+            Text("All videos", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            Text("${visible.size} items", color = TextMuted, fontSize = 10.sp)
         }
         Spacer(Modifier.height(13.dp))
-        EmptyLibraryCard(
-            icon = if (selected == "Folders") Icons.Rounded.FolderOpen else Icons.Rounded.Movie,
-            title = if (query.isBlank()) "No videos loaded yet" else "No matching videos",
-            body = "Your video library layout is ready. Local video scanning, thumbnails and playback will be connected next."
-        )
+        when {
+            !hasAccess -> PermissionCard("Allow video access", "NK PLAYER needs video permission to show local videos. Android may let you select only specific videos.", onRequestAccess)
+            visible.isEmpty() -> EmptyLibraryCard(
+                icon = Icons.Rounded.Movie,
+                title = if (query.isBlank()) "No videos found" else "No matching videos",
+                body = "Supported local video files will appear here after a device scan."
+            )
+            else -> visible.forEach { item ->
+                MediaRow(item.title, "Local video", item.durationMs, Icons.Rounded.PlayCircleOutline)
+                Spacer(Modifier.height(8.dp))
+            }
+        }
     }
+}
+
+@Composable
+private fun PermissionCard(title: String, body: String, onRequestAccess: () -> Unit) {
+    HazeCard(Modifier.fillMaxWidth(), radius = 22.dp) {
+        Icon(Icons.Rounded.FolderOpen, null, tint = Accent, modifier = Modifier.size(27.dp))
+        Spacer(Modifier.height(12.dp))
+        Text(title, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        Text(body, color = TextMuted, fontSize = 11.sp, lineHeight = 17.sp)
+        Spacer(Modifier.height(16.dp))
+        Box(
+            Modifier.clip(RoundedCornerShape(14.dp))
+                .background(Color(0xFF31578D))
+                .clickable(onClick = onRequestAccess)
+                .padding(horizontal = 17.dp, vertical = 11.dp)
+        ) { Text("Grant permission", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
+    }
+}
+
+@Composable
+private fun MediaRow(title: String, subtitle: String, durationMs: Long, icon: ImageVector) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(17.dp))
+            .background(Color(0xAA17243A))
+            .border(1.dp, Hairline, RoundedCornerShape(17.dp))
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier.size(43.dp).clip(RoundedCornerShape(13.dp))
+                .background(Color(0x333F75C5)),
+            contentAlignment = Alignment.Center
+        ) { Icon(icon, null, tint = Accent, modifier = Modifier.size(21.dp)) }
+        Column(Modifier.weight(1f).padding(start = 11.dp)) {
+            Text(title, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Spacer(Modifier.height(3.dp))
+            Text(subtitle, color = TextMuted, fontSize = 10.sp, maxLines = 1)
+        }
+        Text(formatDuration(durationMs), color = TextMuted, fontSize = 9.sp)
+    }
+}
+
+private fun formatDuration(durationMs: Long): String {
+    val totalSeconds = (durationMs / 1000).coerceAtLeast(0)
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return "%d:%02d".format(minutes, seconds)
 }
 
 @Composable
