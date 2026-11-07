@@ -617,7 +617,7 @@ private fun formatDuration(durationMs: Long): String {
 
 @Composable
 private fun VideoNowPlayingScreen(
-    player: ExoPlayer,
+    player: Player,
     media: DeviceMedia,
     onBack: () -> Unit
 ) {
