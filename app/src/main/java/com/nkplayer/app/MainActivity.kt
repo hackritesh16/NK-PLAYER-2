@@ -62,8 +62,8 @@ private fun NKPlayerApp() {
                     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                         when (selectedTab) {
                             PlayerTab.HOME -> HomeScreen(onTabSelected = { selectedTab = it })
-                            PlayerTab.AUDIO -> LibraryPlaceholder("Your Audio", "Your music collection will appear here after device scanning is added.", Icons.Rounded.MusicNote)
-                            PlayerTab.VIDEO -> LibraryPlaceholder("Your Videos", "Your videos will appear here after device scanning is added.", Icons.Rounded.VideoLibrary)
+                            PlayerTab.AUDIO -> AudioLibraryScreen()
+                            PlayerTab.VIDEO -> VideoLibraryScreen()
                             PlayerTab.LIBRARY -> LibraryPlaceholder("Your Library", "Favorites, playlists and listening history will live here.", Icons.Rounded.LibraryMusic)
                         }
                     }
@@ -316,5 +316,169 @@ private fun NavItem(label: String, icon: ImageVector, active: Boolean, onClick: 
         Icon(icon, contentDescription = label, tint = if (active) Accent else TextMuted, modifier = Modifier.size(20.dp))
         Spacer(Modifier.height(3.dp))
         Text(label, color = if (active) Accent else TextMuted, fontSize = 9.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Medium)
+    }
+}
+
+
+@Composable
+private fun AudioLibraryScreen() {
+    var selected by remember { mutableStateOf("Songs") }
+    var query by remember { mutableStateOf("") }
+    var sort by remember { mutableStateOf("Recently added") }
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(top = 22.dp, bottom = 18.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("AUDIO COLLECTION", color = Accent, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                Spacer(Modifier.height(7.dp))
+                Text("Your music.", color = TextPrimary, fontSize = 29.sp, fontWeight = FontWeight.Bold)
+                Text("All your sounds, in one place.", color = TextMuted, fontSize = 12.sp)
+            }
+            GlassIconButton(Icons.Rounded.MoreVert, "More options") { sort = if (sort == "Recently added") "Name" else "Recently added" }
+        }
+        Spacer(Modifier.height(22.dp))
+        SearchSurface(hint = "Search songs, artists, albums", value = query, onValueChange = { query = it })
+        Spacer(Modifier.height(18.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("Songs", "Albums", "Artists", "Folders").forEach { item ->
+                FilterPill(item, selected == item) { selected = item }
+            }
+        }
+        Spacer(Modifier.height(18.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(selected, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            Text(sort, color = TextMuted, fontSize = 10.sp)
+            Spacer(Modifier.width(5.dp))
+            Icon(Icons.Rounded.SwapVert, null, tint = Accent, modifier = Modifier.size(16.dp))
+        }
+        Spacer(Modifier.height(13.dp))
+        EmptyLibraryCard(
+            icon = when (selected) {
+                "Albums" -> Icons.Rounded.Album
+                "Artists" -> Icons.Rounded.Person
+                "Folders" -> Icons.Rounded.FolderOpen
+                else -> Icons.Rounded.MusicNote
+            },
+            title = if (query.isBlank()) "Your $selected will show up here" else "No matching $selected",
+            body = "The audio library screen is ready. Device media scanning and real song data are the next implementation step."
+        )
+    }
+}
+
+@Composable
+private fun VideoLibraryScreen() {
+    var selected by remember { mutableStateOf("All videos") }
+    var query by remember { mutableStateOf("") }
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(top = 22.dp, bottom = 18.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("VIDEO COLLECTION", color = Accent, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                Spacer(Modifier.height(7.dp))
+                Text("Your videos.", color = TextPrimary, fontSize = 29.sp, fontWeight = FontWeight.Bold)
+                Text("Your local cinema.", color = TextMuted, fontSize = 12.sp)
+            }
+            GlassIconButton(Icons.Rounded.GridView, "View layout") { }
+        }
+        Spacer(Modifier.height(22.dp))
+        SearchSurface(hint = "Search videos and folders", value = query, onValueChange = { query = it })
+        Spacer(Modifier.height(18.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("All videos", "Folders", "Recently played").forEach { item ->
+                FilterPill(item, selected == item) { selected = item }
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(selected, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            Text("Newest first", color = TextMuted, fontSize = 10.sp)
+            Spacer(Modifier.width(5.dp))
+            Icon(Icons.Rounded.SwapVert, null, tint = Accent, modifier = Modifier.size(16.dp))
+        }
+        Spacer(Modifier.height(13.dp))
+        EmptyLibraryCard(
+            icon = if (selected == "Folders") Icons.Rounded.FolderOpen else Icons.Rounded.Movie,
+            title = if (query.isBlank()) "No videos loaded yet" else "No matching videos",
+            body = "Your video library layout is ready. Local video scanning, thumbnails and playback will be connected next."
+        )
+    }
+}
+
+@Composable
+private fun SearchSurface(hint: String, value: String, onValueChange: (String) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(17.dp))
+            .background(Color(0xAA17243A))
+            .border(1.dp, Hairline, RoundedCornerShape(17.dp))
+            .padding(horizontal = 14.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(Icons.Rounded.Search, null, tint = TextMuted, modifier = Modifier.size(19.dp))
+        Spacer(Modifier.width(10.dp))
+        androidx.compose.foundation.text.BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            textStyle = androidx.compose.ui.text.TextStyle(color = TextPrimary, fontSize = 12.sp),
+            modifier = Modifier.weight(1f),
+            decorationBox = { inner ->
+                Box {
+                    if (value.isEmpty()) Text(hint, color = TextMuted, fontSize = 12.sp)
+                    inner()
+                }
+            }
+        )
+        if (value.isNotEmpty()) {
+            Icon(Icons.Rounded.Close, contentDescription = "Clear search", tint = TextMuted,
+                modifier = Modifier.size(17.dp).clickable { onValueChange("") })
+        }
+    }
+}
+
+@Composable
+private fun FilterPill(label: String, active: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier.clip(CircleShape)
+            .background(if (active) Color(0xFF31578D) else Color(0x88172335))
+            .border(1.dp, if (active) Color(0x668AB8FF) else Hairline, CircleShape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 13.dp, vertical = 9.dp)
+    ) {
+        Text(label, color = if (active) Color.White else TextMuted, fontSize = 10.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun EmptyLibraryCard(icon: ImageVector, title: String, body: String) {
+    HazeCard(
+        modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+        brush = Brush.linearGradient(listOf(Color(0xCC1B2A42), Color(0xAA101A2A))),
+        radius = 23.dp
+    ) {
+        Box(
+            Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 8.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                Modifier.size(76.dp).clip(CircleShape)
+                    .background(Brush.radialGradient(listOf(Color(0x553D70B7), Color(0x111B2A42))))
+                    .border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) { Icon(icon, null, tint = Accent, modifier = Modifier.size(31.dp)) }
+        }
+        Spacer(Modifier.height(14.dp))
+        Text(title, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        Text(body, color = TextMuted, fontSize = 11.sp, lineHeight = 17.sp)
+        Spacer(Modifier.height(13.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(6.dp).clip(CircleShape).background(Accent))
+            Spacer(Modifier.width(7.dp))
+            Text("LIBRARY UI READY · MEDIA SCAN PENDING", color = Accent, fontSize = 8.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+        }
     }
 }
