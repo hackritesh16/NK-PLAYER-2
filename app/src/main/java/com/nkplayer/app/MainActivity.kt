@@ -22,6 +22,11 @@ import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Slider
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import kotlinx.coroutines.delay
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
@@ -56,6 +61,16 @@ private enum class PlayerTab { HOME, AUDIO, VIDEO, LIBRARY }
 @Composable
 private fun NKPlayerApp() {
     val context = LocalContext.current
+    val exoPlayer = remember {
+        ExoPlayer.Builder(context).build()
+    }
+    DisposableEffect(exoPlayer) {
+        onDispose { exoPlayer.release() }
+    }
+    var currentMedia by remember { mutableStateOf<DeviceMedia?>(null) }
+    var isPlaying by remember { mutableStateOf(false) }
+    var positionMs by remember { mutableLongStateOf(0L) }
+    var durationMs by remember { mutableLongStateOf(0L) }
     var accessRefresh by remember { mutableIntStateOf(0) }
     val audioAllowed = remember(accessRefresh) { hasAudioPermission(context) }
     val videoAllowed = remember(accessRefresh) { hasVideoPermission(context) }
@@ -68,8 +83,7 @@ private fun NKPlayerApp() {
     ) { accessRefresh++ }
 
     fun requestMediaAccess() {
-        val permissions = mediaPermissionsToRequest()
-        permissionLauncher.launch(permissions)
+        permissionLauncher.launch(mediaPermissionsToRequest())
     }
 
     LaunchedEffect(audioAllowed, videoAllowed) {
@@ -77,33 +91,59 @@ private fun NKPlayerApp() {
         if (videoAllowed) videoItems = MediaStoreRepository.loadVideos(context)
     }
 
+    LaunchedEffect(currentMedia?.uri) {
+        val media = currentMedia ?: return@LaunchedEffect
+        exoPlayer.setMediaItem(MediaItem.fromUri(media.uri))
+        exoPlayer.prepare()
+        exoPlayer.playWhenReady = true
+        isPlaying = true
+    }
+
+    LaunchedEffect(exoPlayer) {
+        while (true) {
+            positionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
+            durationMs = exoPlayer.duration.takeIf { it > 0L } ?: 0L
+            isPlaying = exoPlayer.isPlaying
+            delay(350)
+        }
+    }
+
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize(), color = Background) {
             Box(modifier = Modifier.fillMaxSize()) {
                 AmbientBackdrop()
-                Column(
-                    modifier = Modifier.fillMaxSize()
-                        .statusBarsPadding()
-                        .navigationBarsPadding()
-                        .padding(horizontal = 18.dp)
-                ) {
-                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                        when (selectedTab) {
-                            PlayerTab.HOME -> HomeScreen(onTabSelected = { selectedTab = it })
-                            PlayerTab.AUDIO -> AudioLibraryScreen(
-                                items = audioItems,
-                                hasAccess = audioAllowed,
-                                onRequestAccess = ::requestMediaAccess
-                            )
-                            PlayerTab.VIDEO -> VideoLibraryScreen(
-                                items = videoItems,
-                                hasAccess = videoAllowed,
-                                onRequestAccess = ::requestMediaAccess
-                            )
-                            PlayerTab.LIBRARY -> LibraryPlaceholder("Your Library", "Favorites, playlists and listening history will live here.", Icons.Rounded.LibraryMusic)
+                if (currentMedia != null) {
+                    AudioNowPlayingScreen(
+                        media = currentMedia!!,
+                        isPlaying = isPlaying,
+                        positionMs = positionMs,
+                        durationMs = durationMs,
+                        onBack = { exoPlayer.pause(); currentMedia = null },
+                        onToggle = { if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play() },
+                        onSeek = { exoPlayer.seekTo(it) }
+                    )
+                } else {
+                    Column(
+                        modifier = Modifier.fillMaxSize().statusBarsPadding()
+                            .navigationBarsPadding().padding(horizontal = 18.dp)
+                    ) {
+                        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                            when (selectedTab) {
+                                PlayerTab.HOME -> HomeScreen(onTabSelected = { selectedTab = it })
+                                PlayerTab.AUDIO -> AudioLibraryScreen(
+                                    items = audioItems, hasAccess = audioAllowed,
+                                    onRequestAccess = ::requestMediaAccess,
+                                    onPlay = { currentMedia = it }
+                                )
+                                PlayerTab.VIDEO -> VideoLibraryScreen(
+                                    items = videoItems, hasAccess = videoAllowed,
+                                    onRequestAccess = ::requestMediaAccess
+                                )
+                                PlayerTab.LIBRARY -> LibraryPlaceholder("Your Library", "Favorites, playlists and listening history will live here.", Icons.Rounded.LibraryMusic)
+                            }
                         }
+                        BottomNavigation(selectedTab, onSelect = { selectedTab = it })
                     }
-                    BottomNavigation(selectedTab, onSelect = { selectedTab = it })
                 }
             }
         }
@@ -389,7 +429,8 @@ private fun NavItem(label: String, icon: ImageVector, active: Boolean, onClick: 
 private fun AudioLibraryScreen(
     items: List<DeviceMedia>,
     hasAccess: Boolean,
-    onRequestAccess: () -> Unit
+    onRequestAccess: () -> Unit,
+    onPlay: (DeviceMedia) -> Unit
 ) {
     var selected by remember { mutableStateOf("Songs") }
     var query by remember { mutableStateOf("") }
@@ -452,7 +493,7 @@ private fun AudioLibraryScreen(
                     "Artists" -> "${items.count { it.artist == item.artist }} tracks"
                     else -> item.artist
                 }
-                MediaRow(title.ifBlank { "Unknown" }, subtitle, item.durationMs, Icons.Rounded.MusicNote)
+                MediaRow(title.ifBlank { "Unknown" }, subtitle, item.durationMs, Icons.Rounded.MusicNote, onClick = { if (selected == "Songs") onPlay(item) })
                 Spacer(Modifier.height(8.dp))
             }
         }
@@ -524,11 +565,12 @@ private fun PermissionCard(title: String, body: String, onRequestAccess: () -> U
 }
 
 @Composable
-private fun MediaRow(title: String, subtitle: String, durationMs: Long, icon: ImageVector) {
+private fun MediaRow(title: String, subtitle: String, durationMs: Long, icon: ImageVector, onClick: () -> Unit = {}) {
     Row(
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(17.dp))
             .background(Color(0xAA17243A))
             .border(1.dp, Hairline, RoundedCornerShape(17.dp))
+            .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -551,6 +593,91 @@ private fun formatDuration(durationMs: Long): String {
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
     return "%d:%02d".format(minutes, seconds)
+}
+
+
+@Composable
+private fun AudioNowPlayingScreen(
+    media: DeviceMedia,
+    isPlaying: Boolean,
+    positionMs: Long,
+    durationMs: Long,
+    onBack: () -> Unit,
+    onToggle: () -> Unit,
+    onSeek: (Long) -> Unit
+) {
+    var draggingPosition by remember(media.id) { mutableStateOf<Float?>(null) }
+    val shownPosition = draggingPosition?.toLong() ?: positionMs
+    Column(
+        modifier = Modifier.fillMaxSize().statusBarsPadding()
+            .navigationBarsPadding().verticalScroll(rememberScrollState())
+            .padding(horizontal = 22.dp, vertical = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            GlassIconButton(Icons.Rounded.KeyboardArrowDown, "Back to library", onBack)
+            Spacer(Modifier.weight(1f))
+            Text("NOW PLAYING", color = TextMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+            Spacer(Modifier.weight(1f))
+            GlassIconButton(Icons.Rounded.MoreVert, "More options") { }
+        }
+        Spacer(Modifier.height(44.dp))
+        Box(
+            Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(34.dp))
+                .background(Brush.linearGradient(listOf(Color(0xFF355D96), Color(0xFF172B4B), Color(0xFF101827))))
+                .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(34.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color(0x554E8BD8), Color.Transparent))))
+            Icon(Icons.Rounded.MusicNote, null, tint = Color.White.copy(alpha = 0.92f), modifier = Modifier.size(104.dp))
+        }
+        Spacer(Modifier.height(34.dp))
+        Text(media.title, color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        Spacer(Modifier.height(7.dp))
+        Text(media.artist, color = TextMuted, fontSize = 14.sp, maxLines = 1)
+        Spacer(Modifier.height(26.dp))
+        Slider(
+            value = if (durationMs > 0) shownPosition.coerceIn(0L, durationMs).toFloat() else 0f,
+            onValueChange = { draggingPosition = it },
+            onValueChangeFinished = { draggingPosition?.let { onSeek(it.toLong()) }; draggingPosition = null },
+            valueRange = 0f..(durationMs.coerceAtLeast(1L).toFloat())
+        )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(formatDuration(shownPosition), color = TextMuted, fontSize = 10.sp)
+            Text(formatDuration(durationMs), color = TextMuted, fontSize = 10.sp)
+        }
+        Spacer(Modifier.height(28.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            GlassIconButton(Icons.Rounded.Shuffle, "Shuffle") { }
+            GlassIconButton(Icons.Rounded.Replay10, "Back 10 seconds") { onSeek((positionMs - 10_000L).coerceAtLeast(0L)) }
+            Box(
+                Modifier.size(70.dp).clip(CircleShape)
+                    .background(Brush.linearGradient(listOf(Color(0xFF8AB8FF), Color(0xFF547FC1))))
+                    .clickable(onClick = onToggle),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play or pause", tint = Color(0xFF08111F), modifier = Modifier.size(36.dp))
+            }
+            GlassIconButton(Icons.Rounded.Forward10, "Forward 10 seconds") { onSeek((positionMs + 10_000L).coerceAtMost(durationMs)) }
+            GlassIconButton(Icons.Rounded.Repeat, "Repeat") { }
+        }
+        Spacer(Modifier.height(25.dp))
+        HazeCard(Modifier.fillMaxWidth(), radius = 18.dp) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.GraphicEq, null, tint = Accent, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Audio output", color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Device speaker / connected audio", color = TextMuted, fontSize = 10.sp)
+                }
+                Icon(Icons.Rounded.VolumeUp, null, tint = TextMuted)
+            }
+        }
+    }
 }
 
 @Composable
